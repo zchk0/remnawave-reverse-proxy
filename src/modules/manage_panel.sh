@@ -11,6 +11,7 @@ show_manage_panel_menu() {
     echo -e "${COLOR_YELLOW}4. ${LANG[VIEW_LOGS]}${COLOR_RESET}"
     echo -e "${COLOR_YELLOW}5. ${LANG[REMNAWAVE_CLI]}${COLOR_RESET}"
     echo -e "${COLOR_YELLOW}6. ${LANG[ACCESS_PANEL]}${COLOR_RESET}"
+    echo -e "${COLOR_YELLOW}7. ${LANG[SYNC_UFW_FROM_PROFILE]}${COLOR_RESET}"
     echo -e ""
     echo -e "${COLOR_YELLOW}0. ${LANG[EXIT]}${COLOR_RESET}"
     echo -e ""
@@ -49,6 +50,12 @@ show_manage_panel_menu() {
             ;;
         6)
             manage_panel_access
+            sleep 2
+            log_clear
+            show_manage_panel_menu
+            ;;
+        7)
+            sync_ufw_ports_from_profile
             sleep 2
             log_clear
             show_manage_panel_menu
@@ -203,6 +210,163 @@ view_logs() {
 
     echo -e "${COLOR_YELLOW}${LANG[VIEW_LOGS]}${COLOR_RESET}"
     docker compose logs -f -t
+}
+
+sync_ufw_ports_from_profile() {
+    if [ ! -d "/opt/remnawave" ]; then
+        echo -e "${COLOR_RED}${LANG[SYNC_UFW_PANEL_REQUIRED]}${COLOR_RESET}"
+        return 1
+    fi
+
+    if ! command -v ufw >/dev/null 2>&1; then
+        echo -e "${COLOR_RED}${LANG[ERROR_CONFIGURE_UFW]}${COLOR_RESET}"
+        return 1
+    fi
+
+    local domain_url="127.0.0.1:3000"
+    load_api_module
+    get_panel_token || return 1
+
+    local token
+    token=$(cat "$TOKEN_FILE")
+
+    local config_response
+    config_response=$(make_api_request "GET" "${domain_url}/api/config-profiles" "$token")
+    if [ -z "$config_response" ] || ! echo "$config_response" | jq -e '.' > /dev/null 2>&1; then
+        echo -e "${COLOR_RED}${LANG[WARP_NO_CONFIGS]}: Invalid response${COLOR_RESET}"
+        return 1
+    fi
+
+    if ! echo "$config_response" | jq -e '.response.configProfiles | type == "array"' > /dev/null 2>&1; then
+        echo -e "${COLOR_RED}${LANG[WARP_NO_CONFIGS]}: Response does not contain configProfiles array${COLOR_RESET}"
+        return 1
+    fi
+
+    local config_count
+    config_count=$(echo "$config_response" | jq '.response.configProfiles | length')
+    if [ "$config_count" -eq 0 ]; then
+        echo -e "${COLOR_RED}${LANG[WARP_NO_CONFIGS]}: Empty configuration list${COLOR_RESET}"
+        return 1
+    fi
+
+    local configs
+    configs=$(echo "$config_response" | jq -r '.response.configProfiles[] | select(.uuid and .name) | [.name, .uuid] | @tsv' 2>/dev/null)
+    if [ -z "$configs" ]; then
+        echo -e "${COLOR_RED}${LANG[WARP_NO_CONFIGS]}: No valid configurations found in response${COLOR_RESET}"
+        return 1
+    fi
+
+    echo -e ""
+    echo -e "${COLOR_YELLOW}${LANG[SYNC_UFW_SELECT_CONFIG]}${COLOR_RESET}"
+    echo -e ""
+
+    local i=1
+    local selected_name=""
+    declare -A config_map
+    declare -A config_name_map
+    while IFS=$'\t' read -r name uuid; do
+        echo -e "${COLOR_YELLOW}$i. $name${COLOR_RESET}"
+        config_map[$i]="$uuid"
+        config_name_map[$i]="$name"
+        ((i++))
+    done <<< "$configs"
+
+    echo -e ""
+    echo -e "${COLOR_YELLOW}0. ${LANG[EXIT]}${COLOR_RESET}"
+    echo -e ""
+    reading "${LANG[WARP_PROMPT1]}" CONFIG_OPTION
+
+    if [ "$CONFIG_OPTION" == "0" ]; then
+        echo -e "${COLOR_YELLOW}${LANG[EXIT]}${COLOR_RESET}"
+        return 0
+    fi
+
+    if [ -z "${config_map[$CONFIG_OPTION]}" ]; then
+        echo -e "${COLOR_RED}${LANG[WARP_INVALID_CHOICE2]}${COLOR_RESET}"
+        return 1
+    fi
+
+    local selected_uuid=${config_map[$CONFIG_OPTION]}
+    selected_name=${config_name_map[$CONFIG_OPTION]}
+
+    local config_data
+    config_data=$(make_api_request "GET" "${domain_url}/api/config-profiles/$selected_uuid" "$token")
+    if [ -z "$config_data" ] || ! echo "$config_data" | jq -e '.' > /dev/null 2>&1; then
+        echo -e "${COLOR_RED}${LANG[WARP_UPDATE_FAIL]}: Invalid response${COLOR_RESET}"
+        return 1
+    fi
+
+    local config_json
+    if echo "$config_data" | jq -e '.response.config' > /dev/null 2>&1; then
+        config_json=$(echo "$config_data" | jq -r '.response.config')
+    else
+        config_json=$(echo "$config_data" | jq -r '.config // ""')
+    fi
+
+    if [ -z "$config_json" ] || [ "$config_json" == "null" ]; then
+        echo -e "${COLOR_RED}${LANG[WARP_UPDATE_FAIL]}: No config found in response${COLOR_RESET}"
+        return 1
+    fi
+
+    local inbound_entries
+    inbound_entries=$(echo "$config_json" | jq -r '
+        (.inbounds // [])
+        | map(select((.port // null) != null))
+        | map(select(((.listen // "") != "127.0.0.1") and ((.listen // "") != "::1") and ((.listen // "") != "localhost")))
+        | map({
+            tag: (.tag // "inbound"),
+            port: (.port | tostring),
+            ufwProto: (
+                if .protocol == "wireguard" or ((.streamSettings.network // "") == "quic") or ((.streamSettings.network // "") == "kcp")
+                then "udp"
+                else "tcp"
+                end
+            )
+        })
+        | .[]
+        | [.tag, .port, .ufwProto] | @tsv
+    ' 2>/dev/null)
+
+    if [ -z "$inbound_entries" ]; then
+        echo -e "${COLOR_YELLOW}${LANG[SYNC_UFW_NO_INBOUNDS]}${COLOR_RESET}"
+        return 0
+    fi
+
+    printf "${COLOR_YELLOW}${LANG[SYNC_UFW_APPLYING_RULE]}${COLOR_RESET}\n" "$selected_name"
+
+    local changes_made=0
+    local add_failed=0
+    while IFS=$'\t' read -r inbound_tag inbound_port inbound_proto; do
+        [ -z "$inbound_port" ] && continue
+
+        if ufw status | grep -q "${inbound_port}/${inbound_proto}"; then
+            printf "${COLOR_YELLOW}${LANG[SYNC_UFW_RULE_EXISTS]}${COLOR_RESET}\n" "$inbound_port" "$inbound_proto" "$inbound_tag"
+            continue
+        fi
+
+        if ufw allow "${inbound_port}/${inbound_proto}" comment "Remnawave ${inbound_tag}" > /dev/null 2>&1; then
+            printf "${COLOR_GREEN}${LANG[SYNC_UFW_RULE_ADDED]}${COLOR_RESET}\n" "$inbound_port" "$inbound_proto" "$inbound_tag"
+            changes_made=1
+        else
+            printf "${COLOR_RED}${LANG[SYNC_UFW_RULE_ADD_FAILED]}${COLOR_RESET}\n" "$inbound_port" "$inbound_proto" "$inbound_tag"
+            add_failed=1
+        fi
+    done <<< "$inbound_entries"
+
+    if [ "$changes_made" -eq 1 ]; then
+        ufw reload > /dev/null 2>&1
+        if [ $? -ne 0 ]; then
+            echo -e "${COLOR_RED}${LANG[UFW_RELOAD_FAILED]}${COLOR_RESET}"
+            return 1
+        fi
+        echo -e "${COLOR_GREEN}${LANG[SYNC_UFW_RELOAD_OK]}${COLOR_RESET}"
+    else
+        echo -e "${COLOR_YELLOW}${LANG[SYNC_UFW_NO_CHANGES]}${COLOR_RESET}"
+    fi
+
+    if [ "$add_failed" -eq 1 ]; then
+        return 1
+    fi
 }
 
 #Manage Panel Access
