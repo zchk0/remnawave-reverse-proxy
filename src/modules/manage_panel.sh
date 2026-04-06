@@ -2,6 +2,10 @@
 # Module: Manage Panel
 
 show_manage_panel_menu() {
+    local sync_ufw_label="${LANG[SYNC_UFW_FROM_PROFILE]:-Sync UFW ports from config profile}"
+    local manage_prompt="${LANG[MANAGE_PANEL_NODE_PROMPT]:-Select action (0-7):}"
+    local manage_invalid_choice="${LANG[MANAGE_PANEL_NODE_INVALID_CHOICE]:-Invalid choice. Please select 0-7.}"
+
     echo -e ""
     echo -e "${COLOR_GREEN}${LANG[MENU_3]}${COLOR_RESET}"
     echo -e ""
@@ -11,11 +15,11 @@ show_manage_panel_menu() {
     echo -e "${COLOR_YELLOW}4. ${LANG[VIEW_LOGS]}${COLOR_RESET}"
     echo -e "${COLOR_YELLOW}5. ${LANG[REMNAWAVE_CLI]}${COLOR_RESET}"
     echo -e "${COLOR_YELLOW}6. ${LANG[ACCESS_PANEL]}${COLOR_RESET}"
-    echo -e "${COLOR_YELLOW}7. ${LANG[SYNC_UFW_FROM_PROFILE]}${COLOR_RESET}"
+    echo -e "${COLOR_YELLOW}7. ${sync_ufw_label}${COLOR_RESET}"
     echo -e ""
     echo -e "${COLOR_YELLOW}0. ${LANG[EXIT]}${COLOR_RESET}"
     echo -e ""
-    reading "${LANG[MANAGE_PANEL_NODE_PROMPT]}" SUB_OPTION
+    reading "${manage_prompt}" SUB_OPTION
 
     case $SUB_OPTION in
         1)
@@ -64,7 +68,7 @@ show_manage_panel_menu() {
             remnawave_reverse
             ;;
         *)
-            echo -e "${COLOR_YELLOW}${LANG[MANAGE_PANEL_NODE_INVALID_CHOICE]}${COLOR_RESET}"
+            echo -e "${COLOR_YELLOW}${manage_invalid_choice}${COLOR_RESET}"
             sleep 1
             show_manage_panel_menu
             ;;
@@ -213,6 +217,12 @@ view_logs() {
 }
 
 sync_ufw_ports_from_profile() {
+    local sync_ufw_start="${LANG[SYNC_UFW_START]:-Starting UFW sync from config profile...}"
+    local sync_ufw_fetch_profiles="${LANG[SYNC_UFW_FETCH_PROFILES]:-Loading config profiles from panel...}"
+    local sync_ufw_fetch_profile="${LANG[SYNC_UFW_FETCH_PROFILE]:-Loading selected profile: %s}"
+    local sync_ufw_found_ports="${LANG[SYNC_UFW_FOUND_PORTS]:-Found %s external inbound port(s) in profile %s}"
+    local sync_ufw_summary="${LANG[SYNC_UFW_SUMMARY]:-UFW sync summary for %s: added=%s, existing=%s, failed=%s}"
+
     if [ ! -d "/opt/remnawave" ]; then
         echo -e "${COLOR_RED}${LANG[SYNC_UFW_PANEL_REQUIRED]}${COLOR_RESET}"
         return 1
@@ -229,6 +239,8 @@ sync_ufw_ports_from_profile() {
 
     local token
     token=$(cat "$TOKEN_FILE")
+    echo -e "${COLOR_YELLOW}${sync_ufw_start}${COLOR_RESET}"
+    echo -e "${COLOR_YELLOW}${sync_ufw_fetch_profiles}${COLOR_RESET}"
 
     local config_response
     config_response=$(make_api_request "GET" "${domain_url}/api/config-profiles" "$token")
@@ -288,6 +300,7 @@ sync_ufw_ports_from_profile() {
 
     local selected_uuid=${config_map[$CONFIG_OPTION]}
     selected_name=${config_name_map[$CONFIG_OPTION]}
+    printf "${COLOR_YELLOW}${sync_ufw_fetch_profile}${COLOR_RESET}\n" "$selected_name"
 
     local config_data
     config_data=$(make_api_request "GET" "${domain_url}/api/config-profiles/$selected_uuid" "$token")
@@ -332,21 +345,28 @@ sync_ufw_ports_from_profile() {
         return 0
     fi
 
+    local inbound_count
+    inbound_count=$(printf '%s\n' "$inbound_entries" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')
+    printf "${COLOR_YELLOW}${sync_ufw_found_ports}${COLOR_RESET}\n" "$inbound_count" "$selected_name"
     printf "${COLOR_YELLOW}${LANG[SYNC_UFW_APPLYING_RULE]}${COLOR_RESET}\n" "$selected_name"
 
     local changes_made=0
     local add_failed=0
+    local rules_added=0
+    local rules_existing=0
     while IFS=$'\t' read -r inbound_tag inbound_port inbound_proto; do
         [ -z "$inbound_port" ] && continue
 
         if ufw status | grep -q "${inbound_port}/${inbound_proto}"; then
             printf "${COLOR_YELLOW}${LANG[SYNC_UFW_RULE_EXISTS]}${COLOR_RESET}\n" "$inbound_port" "$inbound_proto" "$inbound_tag"
+            rules_existing=$((rules_existing + 1))
             continue
         fi
 
         if ufw allow "${inbound_port}/${inbound_proto}" comment "Remnawave ${inbound_tag}" > /dev/null 2>&1; then
             printf "${COLOR_GREEN}${LANG[SYNC_UFW_RULE_ADDED]}${COLOR_RESET}\n" "$inbound_port" "$inbound_proto" "$inbound_tag"
             changes_made=1
+            rules_added=$((rules_added + 1))
         else
             printf "${COLOR_RED}${LANG[SYNC_UFW_RULE_ADD_FAILED]}${COLOR_RESET}\n" "$inbound_port" "$inbound_proto" "$inbound_tag"
             add_failed=1
@@ -363,6 +383,8 @@ sync_ufw_ports_from_profile() {
     else
         echo -e "${COLOR_YELLOW}${LANG[SYNC_UFW_NO_CHANGES]}${COLOR_RESET}"
     fi
+
+    printf "${COLOR_YELLOW}${sync_ufw_summary}${COLOR_RESET}\n" "$selected_name" "$rules_added" "$rules_existing" "$add_failed"
 
     if [ "$add_failed" -eq 1 ]; then
         return 1
