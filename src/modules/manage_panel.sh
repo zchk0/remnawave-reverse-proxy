@@ -217,132 +217,156 @@ view_logs() {
 }
 
 sync_ufw_ports_from_profile() {
-    local sync_ufw_start="${LANG[SYNC_UFW_START]:-Starting UFW sync from config profile...}"
+    local sync_ufw_start="${LANG[SYNC_UFW_START]:-Starting UFW sync...}"
     local sync_ufw_fetch_profiles="${LANG[SYNC_UFW_FETCH_PROFILES]:-Loading config profiles from panel...}"
     local sync_ufw_fetch_profile="${LANG[SYNC_UFW_FETCH_PROFILE]:-Loading selected profile: %s}"
-    local sync_ufw_found_ports="${LANG[SYNC_UFW_FOUND_PORTS]:-Found %s external inbound port(s) in profile %s}"
+    local sync_ufw_found_ports="${LANG[SYNC_UFW_FOUND_PORTS]:-Found %s external inbound port(s) in source %s}"
     local sync_ufw_summary="${LANG[SYNC_UFW_SUMMARY]:-UFW sync summary for %s: added=%s, existing=%s, failed=%s}"
-
-    if [ ! -d "/opt/remnawave" ]; then
-        echo -e "${COLOR_RED}${LANG[SYNC_UFW_PANEL_REQUIRED]}${COLOR_RESET}"
-        return 1
-    fi
+    local sync_ufw_node_scan="${LANG[SYNC_UFW_NODE_SCAN]:-Inspecting remnanode runtime listeners...}"
+    local sync_ufw_node_source="${LANG[SYNC_UFW_NODE_SOURCE]:-remnanode runtime}"
+    local sync_ufw_panel_source="${LANG[SYNC_UFW_PANEL_SOURCE]:-panel profile %s}"
+    local sync_ufw_no_node_ports="${LANG[SYNC_UFW_NO_NODE_PORTS]:-No external rw-core listeners found on remnanode.}"
+    local sync_ufw_source_required="${LANG[SYNC_UFW_SOURCE_REQUIRED]:-This action requires a local remnanode or remnawave installation.}"
 
     if ! command -v ufw >/dev/null 2>&1; then
         echo -e "${COLOR_RED}${LANG[ERROR_CONFIGURE_UFW]}${COLOR_RESET}"
         return 1
     fi
 
-    local domain_url="127.0.0.1:3000"
-    load_api_module
-    get_panel_token || return 1
-
-    local token
-    token=$(cat "$TOKEN_FILE")
     echo -e "${COLOR_YELLOW}${sync_ufw_start}${COLOR_RESET}"
-    echo -e "${COLOR_YELLOW}${sync_ufw_fetch_profiles}${COLOR_RESET}"
-
-    local config_response
-    config_response=$(make_api_request "GET" "${domain_url}/api/config-profiles" "$token")
-    if [ -z "$config_response" ] || ! echo "$config_response" | jq -e '.' > /dev/null 2>&1; then
-        echo -e "${COLOR_RED}${LANG[WARP_NO_CONFIGS]}: Invalid response${COLOR_RESET}"
-        return 1
-    fi
-
-    if ! echo "$config_response" | jq -e '.response.configProfiles | type == "array"' > /dev/null 2>&1; then
-        echo -e "${COLOR_RED}${LANG[WARP_NO_CONFIGS]}: Response does not contain configProfiles array${COLOR_RESET}"
-        return 1
-    fi
-
-    local config_count
-    config_count=$(echo "$config_response" | jq '.response.configProfiles | length')
-    if [ "$config_count" -eq 0 ]; then
-        echo -e "${COLOR_RED}${LANG[WARP_NO_CONFIGS]}: Empty configuration list${COLOR_RESET}"
-        return 1
-    fi
-
-    local configs
-    configs=$(echo "$config_response" | jq -r '.response.configProfiles[] | select(.uuid and .name) | [.name, .uuid] | @tsv' 2>/dev/null)
-    if [ -z "$configs" ]; then
-        echo -e "${COLOR_RED}${LANG[WARP_NO_CONFIGS]}: No valid configurations found in response${COLOR_RESET}"
-        return 1
-    fi
-
-    echo -e ""
-    echo -e "${COLOR_YELLOW}${LANG[SYNC_UFW_SELECT_CONFIG]}${COLOR_RESET}"
-    echo -e ""
-
-    local i=1
-    local selected_name=""
-    declare -A config_map
-    declare -A config_name_map
-    while IFS=$'\t' read -r name uuid; do
-        echo -e "${COLOR_YELLOW}$i. $name${COLOR_RESET}"
-        config_map[$i]="$uuid"
-        config_name_map[$i]="$name"
-        ((i++))
-    done <<< "$configs"
-
-    echo -e ""
-    echo -e "${COLOR_YELLOW}0. ${LANG[EXIT]}${COLOR_RESET}"
-    echo -e ""
-    reading "${LANG[WARP_PROMPT1]}" CONFIG_OPTION
-
-    if [ "$CONFIG_OPTION" == "0" ]; then
-        echo -e "${COLOR_YELLOW}${LANG[EXIT]}${COLOR_RESET}"
-        return 0
-    fi
-
-    if [ -z "${config_map[$CONFIG_OPTION]}" ]; then
-        echo -e "${COLOR_RED}${LANG[WARP_INVALID_CHOICE2]}${COLOR_RESET}"
-        return 1
-    fi
-
-    local selected_uuid=${config_map[$CONFIG_OPTION]}
-    selected_name=${config_name_map[$CONFIG_OPTION]}
-    printf "${COLOR_YELLOW}${sync_ufw_fetch_profile}${COLOR_RESET}\n" "$selected_name"
-
-    local config_data
-    config_data=$(make_api_request "GET" "${domain_url}/api/config-profiles/$selected_uuid" "$token")
-    if [ -z "$config_data" ] || ! echo "$config_data" | jq -e '.' > /dev/null 2>&1; then
-        echo -e "${COLOR_RED}${LANG[WARP_UPDATE_FAIL]}: Invalid response${COLOR_RESET}"
-        return 1
-    fi
-
-    local config_json
-    if echo "$config_data" | jq -e '.response.config' > /dev/null 2>&1; then
-        config_json=$(echo "$config_data" | jq -r '.response.config')
-    else
-        config_json=$(echo "$config_data" | jq -r '.config // ""')
-    fi
-
-    if [ -z "$config_json" ] || [ "$config_json" == "null" ]; then
-        echo -e "${COLOR_RED}${LANG[WARP_UPDATE_FAIL]}: No config found in response${COLOR_RESET}"
-        return 1
-    fi
 
     local inbound_entries
-    inbound_entries=$(echo "$config_json" | jq -r '
-        (.inbounds // [])
-        | map(select((.port // null) != null))
-        | map(select(((.listen // "") != "127.0.0.1") and ((.listen // "") != "::1") and ((.listen // "") != "localhost")))
-        | map({
-            tag: (.tag // "inbound"),
-            port: (.port | tostring),
-            ufwProto: (
-                if .protocol == "wireguard" or ((.streamSettings.network // "") == "quic") or ((.streamSettings.network // "") == "kcp")
-                then "udp"
-                else "tcp"
-                end
-            )
-        })
-        | .[]
-        | [.tag, .port, .ufwProto] | @tsv
-    ' 2>/dev/null)
+    local selected_name=""
+
+    if [ -d "/opt/remnanode" ] && command -v ss >/dev/null 2>&1; then
+        echo -e "${COLOR_YELLOW}${sync_ufw_node_scan}${COLOR_RESET}"
+        inbound_entries=$(ss -H -lntup 2>/dev/null | awk '
+            /rw-core/ {
+                proto=$1
+                local_addr=$5
+                if (local_addr ~ /^127\.0\.0\.1:/ || local_addr ~ /^\[::1\]:/ || local_addr ~ /^localhost:/) next
+                port=local_addr
+                sub(/^.*:/, "", port)
+                if (port ~ /^[0-9]+$/) print "rw-core\t" port "\t" proto
+            }
+        ' | sort -u)
+
+        if [ -n "$inbound_entries" ]; then
+            selected_name="${sync_ufw_node_source}"
+        else
+            echo -e "${COLOR_YELLOW}${sync_ufw_no_node_ports}${COLOR_RESET}"
+        fi
+    fi
+
+    if [ -z "$inbound_entries" ] && [ -d "/opt/remnawave" ]; then
+        local domain_url="127.0.0.1:3000"
+        load_api_module
+        get_panel_token || return 1
+
+        local token
+        token=$(cat "$TOKEN_FILE")
+        echo -e "${COLOR_YELLOW}${sync_ufw_fetch_profiles}${COLOR_RESET}"
+
+        local config_response
+        config_response=$(make_api_request "GET" "${domain_url}/api/config-profiles" "$token")
+        if [ -z "$config_response" ] || ! echo "$config_response" | jq -e '.' > /dev/null 2>&1; then
+            echo -e "${COLOR_RED}${LANG[WARP_NO_CONFIGS]}: Invalid response${COLOR_RESET}"
+            return 1
+        fi
+
+        if ! echo "$config_response" | jq -e '.response.configProfiles | type == "array"' > /dev/null 2>&1; then
+            echo -e "${COLOR_RED}${LANG[WARP_NO_CONFIGS]}: Response does not contain configProfiles array${COLOR_RESET}"
+            return 1
+        fi
+
+        local config_count
+        config_count=$(echo "$config_response" | jq '.response.configProfiles | length')
+        if [ "$config_count" -eq 0 ]; then
+            echo -e "${COLOR_RED}${LANG[WARP_NO_CONFIGS]}: Empty configuration list${COLOR_RESET}"
+            return 1
+        fi
+
+        local configs
+        configs=$(echo "$config_response" | jq -r '.response.configProfiles[] | select(.uuid and .name) | [.name, .uuid] | @tsv' 2>/dev/null)
+        if [ -z "$configs" ]; then
+            echo -e "${COLOR_RED}${LANG[WARP_NO_CONFIGS]}: No valid configurations found in response${COLOR_RESET}"
+            return 1
+        fi
+
+        echo -e ""
+        echo -e "${COLOR_YELLOW}${LANG[SYNC_UFW_SELECT_CONFIG]}${COLOR_RESET}"
+        echo -e ""
+
+        local i=1
+        declare -A config_map
+        declare -A config_name_map
+        while IFS=$'\t' read -r name uuid; do
+            echo -e "${COLOR_YELLOW}$i. $name${COLOR_RESET}"
+            config_map[$i]="$uuid"
+            config_name_map[$i]="$name"
+            ((i++))
+        done <<< "$configs"
+
+        echo -e ""
+        echo -e "${COLOR_YELLOW}0. ${LANG[EXIT]}${COLOR_RESET}"
+        echo -e ""
+        reading "${LANG[WARP_PROMPT1]}" CONFIG_OPTION
+
+        if [ "$CONFIG_OPTION" == "0" ]; then
+            echo -e "${COLOR_YELLOW}${LANG[EXIT]}${COLOR_RESET}"
+            return 0
+        fi
+
+        if [ -z "${config_map[$CONFIG_OPTION]}" ]; then
+            echo -e "${COLOR_RED}${LANG[WARP_INVALID_CHOICE2]}${COLOR_RESET}"
+            return 1
+        fi
+
+        local selected_uuid=${config_map[$CONFIG_OPTION]}
+        selected_name=${config_name_map[$CONFIG_OPTION]}
+        printf "${COLOR_YELLOW}${sync_ufw_fetch_profile}${COLOR_RESET}\n" "$selected_name"
+
+        local config_data
+        config_data=$(make_api_request "GET" "${domain_url}/api/config-profiles/$selected_uuid" "$token")
+        if [ -z "$config_data" ] || ! echo "$config_data" | jq -e '.' > /dev/null 2>&1; then
+            echo -e "${COLOR_RED}${LANG[WARP_UPDATE_FAIL]}: Invalid response${COLOR_RESET}"
+            return 1
+        fi
+
+        local config_json
+        if echo "$config_data" | jq -e '.response.config' > /dev/null 2>&1; then
+            config_json=$(echo "$config_data" | jq -r '.response.config')
+        else
+            config_json=$(echo "$config_data" | jq -r '.config // ""')
+        fi
+
+        if [ -z "$config_json" ] || [ "$config_json" == "null" ]; then
+            echo -e "${COLOR_RED}${LANG[WARP_UPDATE_FAIL]}: No config found in response${COLOR_RESET}"
+            return 1
+        fi
+
+        inbound_entries=$(echo "$config_json" | jq -r '
+            (.inbounds // [])
+            | map(select((.port // null) != null))
+            | map(select(((.listen // "") != "127.0.0.1") and ((.listen // "") != "::1") and ((.listen // "") != "localhost")))
+            | map({
+                tag: (.tag // "inbound"),
+                port: (.port | tostring),
+                ufwProto: (
+                    if .protocol == "wireguard" or ((.streamSettings.network // "") == "quic") or ((.streamSettings.network // "") == "kcp")
+                    then "udp"
+                    else "tcp"
+                    end
+                )
+            })
+            | .[]
+            | [.tag, .port, .ufwProto] | @tsv
+        ' 2>/dev/null)
+    fi
 
     if [ -z "$inbound_entries" ]; then
-        echo -e "${COLOR_YELLOW}${LANG[SYNC_UFW_NO_INBOUNDS]}${COLOR_RESET}"
-        return 0
+        echo -e "${COLOR_RED}${sync_ufw_source_required}${COLOR_RESET}"
+        return 1
     fi
 
     local inbound_count
