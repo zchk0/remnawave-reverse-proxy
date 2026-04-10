@@ -1,8 +1,7 @@
 #!/bin/bash
 # Module: Install Node Only
 
-install_node_nginx() {
-    # Load selfsteal templates module
+collect_node_install_inputs_nginx() {
     load_selfsteal_templates_module
 
     mkdir -p /opt/remnanode && cd /opt/remnanode
@@ -48,12 +47,35 @@ install_node_nginx() {
         echo -e "${COLOR_RED}${LANG[ABORT_MESSAGE]}${COLOR_RESET}"
         exit 1
     fi
+}
 
-SELFSTEAL_BASE_DOMAIN=$(extract_domain "$SELFSTEAL_DOMAIN")
+prepare_nginx_node_certificates() {
+    declare -A domains_to_check
+    domains_to_check["$SELFSTEAL_DOMAIN"]=1
 
-unique_domains["$SELFSTEAL_BASE_DOMAIN"]=1
+    handle_certificates domains_to_check "$CERT_METHOD" "$LETSENCRYPT_EMAIL" "/opt/remnanode"
 
-cat > docker-compose.yml <<EOL
+    if [ -z "$CERT_METHOD" ]; then
+        local base_domain
+        base_domain=$(extract_domain "$SELFSTEAL_DOMAIN")
+        if [ -d "/etc/letsencrypt/live/$base_domain" ] && is_wildcard_cert "$base_domain"; then
+            CERT_METHOD="1"
+        else
+            CERT_METHOD="2"
+        fi
+    fi
+
+    if [ "$CERT_METHOD" == "1" ]; then
+        NODE_CERT_DOMAIN=$(extract_domain "$SELFSTEAL_DOMAIN")
+    else
+        NODE_CERT_DOMAIN="$SELFSTEAL_DOMAIN"
+    fi
+}
+
+write_nginx_node_compose() {
+    local web_command="$1"
+
+    cat > /opt/remnanode/docker-compose.yml <<EOL
 x-common: &common
   ulimits:
     nofile:
@@ -77,41 +99,9 @@ services:
     network_mode: host
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-EOL
-}
-
-installation_node() {
-    echo -e "${COLOR_YELLOW}${LANG[INSTALLING_NODE]}${COLOR_RESET}"
-    sleep 1
-
-    declare -A unique_domains
-    install_node_nginx
-
-    declare -A domains_to_check
-    domains_to_check["$SELFSTEAL_DOMAIN"]=1
-
-    handle_certificates domains_to_check "$CERT_METHOD" "$LETSENCRYPT_EMAIL" "/opt/remnanode"
-
-    if [ -z "$CERT_METHOD" ]; then
-        local base_domain=$(extract_domain "$SELFSTEAL_DOMAIN")
-        if [ -d "/etc/letsencrypt/live/$base_domain" ] && is_wildcard_cert "$base_domain"; then
-            CERT_METHOD="1"
-        else
-            CERT_METHOD="2"
-        fi
-    fi
-
-    if [ "$CERT_METHOD" == "1" ]; then
-        local base_domain=$(extract_domain "$SELFSTEAL_DOMAIN")
-        NODE_CERT_DOMAIN="$base_domain"
-    else
-        NODE_CERT_DOMAIN="$SELFSTEAL_DOMAIN"
-    fi
-
-    cat >> /opt/remnanode/docker-compose.yml <<EOL
       - /dev/shm:/dev/shm:rw
       - /var/www/html:/var/www/html:ro
-    command: sh -c 'rm -f /dev/shm/nginx.sock && exec nginx -g "daemon off;"'
+    command: sh -c '$web_command'
 
   remnanode:
     image: remnawave/node:latest
@@ -127,8 +117,10 @@ installation_node() {
     volumes:
       - /dev/shm:/dev/shm:rw
 EOL
+}
 
-cat > /opt/remnanode/nginx.conf <<EOL
+write_nginx_tcp_node_config() {
+    cat > /opt/remnanode/nginx.conf <<EOL
 server_names_hash_bucket_size 64;
 
 map \$http_upgrade \$connection_upgrade {
@@ -166,8 +158,52 @@ server {
     return 444;
 }
 EOL
+}
 
-    ufw allow from $PANEL_IP to any port 2222 > /dev/null 2>&1
+write_nginx_xhttp_node_config() {
+    cat > /opt/remnanode/nginx.conf <<EOL
+server_names_hash_bucket_size 64;
+
+map \$http_upgrade \$connection_upgrade {
+    default upgrade;
+    ""      close;
+}
+
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_ecdh_curve X25519:prime256v1:secp384r1;
+ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-CHACHA20-POLY1305;
+ssl_prefer_server_ciphers on;
+ssl_session_timeout 1d;
+ssl_session_cache shared:MozSSL:10m;
+ssl_session_tickets off;
+
+server {
+    listen 127.0.0.1:8001 ssl default_server;
+    server_name _;
+    ssl_reject_handshake on;
+    return 444;
+}
+
+server {
+    server_name $SELFSTEAL_DOMAIN;
+    listen 127.0.0.1:8001 ssl proxy_protocol;
+    http2 on;
+    set_real_ip_from 127.0.0.1;
+    real_ip_header proxy_protocol;
+
+    ssl_certificate "/etc/nginx/ssl/$NODE_CERT_DOMAIN/fullchain.pem";
+    ssl_certificate_key "/etc/nginx/ssl/$NODE_CERT_DOMAIN/privkey.pem";
+    ssl_trusted_certificate "/etc/nginx/ssl/$NODE_CERT_DOMAIN/fullchain.pem";
+
+    root /var/www/html;
+    index index.html;
+    add_header X-Robots-Tag "noindex, nofollow, noarchive, nosnippet, noimageindex" always;
+}
+EOL
+}
+
+finish_nginx_node_install() {
+    ufw allow from "$PANEL_IP" to any port 2222 proto tcp > /dev/null 2>&1
     ufw reload > /dev/null 2>&1
 
     echo -e "${COLOR_YELLOW}${LANG[STARTING_NODE]}${COLOR_RESET}"
@@ -197,4 +233,27 @@ EOL
         fi
         ((attempt++))
     done
+}
+
+installation_node() {
+    echo -e "${COLOR_YELLOW}${LANG[INSTALLING_NODE]}${COLOR_RESET}"
+    sleep 1
+
+    collect_node_install_inputs_nginx
+    prepare_nginx_node_certificates
+    write_nginx_node_compose 'rm -f /dev/shm/nginx.sock && exec nginx -g "daemon off;"'
+    write_nginx_tcp_node_config
+    finish_nginx_node_install
+}
+
+installation_node_xhttp() {
+    echo -e "${COLOR_YELLOW}${LANG[INSTALLING_NODE]}${COLOR_RESET}"
+    echo -e "${COLOR_YELLOW}${LANG[XHTTP_PANEL_HINT]}${COLOR_RESET}"
+    sleep 1
+
+    collect_node_install_inputs_nginx
+    prepare_nginx_node_certificates
+    write_nginx_node_compose 'exec nginx -g "daemon off;"'
+    write_nginx_xhttp_node_config
+    finish_nginx_node_install
 }

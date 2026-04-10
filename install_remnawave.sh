@@ -609,6 +609,7 @@ show_install_menu() {
     echo -e "${COLOR_YELLOW}2. ${LANG[INSTALL_PANEL]}${COLOR_RESET}"
     echo -e "${COLOR_YELLOW}3. ${LANG[INSTALL_ADD_NODE]}${COLOR_RESET}"
     echo -e "${COLOR_YELLOW}4. ${LANG[INSTALL_NODE]}${COLOR_RESET}"
+    echo -e "${COLOR_YELLOW}5. ${LANG[INSTALL_NODE_XHTTP]}${COLOR_RESET}"
     echo -e ""
     echo -e "${COLOR_YELLOW}0. ${LANG[EXIT]}${COLOR_RESET}"
     echo -e ""
@@ -755,6 +756,44 @@ manage_install() {
             sleep 2
             log_clear
             ;;
+        5)
+            show_webserver_select
+            case $WEBSERVER_OPTION in
+                1)
+                    load_install_node_module
+                    ensure_runtime_dependencies true || {
+                        echo -e "${COLOR_RED}${LANG[ERROR_INSTALL_DOCKER]}${COLOR_RESET}"
+                        log_clear
+                        exit 1
+                    }
+                    installation_node_xhttp
+                    ;;
+                2)
+                    load_caddy_node_module
+                    ensure_runtime_dependencies false || {
+                        echo -e "${COLOR_RED}${LANG[ERROR_INSTALL_DOCKER]}${COLOR_RESET}"
+                        log_clear
+                        exit 1
+                    }
+                    installation_node_caddy_xhttp
+                    ;;
+                0)
+                    echo -e "${COLOR_YELLOW}${LANG[EXIT]}${COLOR_RESET}"
+                    log_clear
+                    remnawave_reverse
+                    return
+                    ;;
+                *)
+                    echo -e "${COLOR_YELLOW}${LANG[INSTALL_INVALID_CHOICE]}${COLOR_RESET}"
+                    sleep 2
+                    log_clear
+                    manage_install
+                    return
+                    ;;
+            esac
+            sleep 2
+            log_clear
+            ;;
         0)
             echo -e "${COLOR_YELLOW}${LANG[EXIT]}${COLOR_RESET}"
             log_clear
@@ -778,6 +817,7 @@ show_reinstall_options() {
     echo -e "${COLOR_YELLOW}1. ${LANG[INSTALL_PANEL_NODE]}${COLOR_RESET}"
     echo -e "${COLOR_YELLOW}2. ${LANG[INSTALL_PANEL]}${COLOR_RESET}"
     echo -e "${COLOR_YELLOW}3. ${LANG[INSTALL_NODE]}${COLOR_RESET}"
+    echo -e "${COLOR_YELLOW}4. ${LANG[INSTALL_NODE_XHTTP]}${COLOR_RESET}"
     echo -e ""
     echo -e "${COLOR_YELLOW}0. ${LANG[EXIT]}${COLOR_RESET}"
     echo -e ""
@@ -787,7 +827,7 @@ choose_reinstall_type() {
     show_reinstall_options
     reading "${LANG[REINSTALL_PROMPT]}" REINSTALL_OPTION
     case $REINSTALL_OPTION in
-        1|2|3)
+        1|2|3|4)
                 echo -e "${COLOR_RED}${LANG[REINSTALL_WARNING]}${COLOR_RESET}"
                 read confirm
                 if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
@@ -814,6 +854,12 @@ choose_reinstall_type() {
                                     load_api_module
                                     installation_node
                                     ;;
+                                4)
+                                    ensure_runtime_dependencies true || exit 1
+                                    load_install_node_module
+                                    load_api_module
+                                    installation_node_xhttp
+                                    ;;
                             esac
                             ;;
                         2)
@@ -834,6 +880,11 @@ choose_reinstall_type() {
                                     ensure_runtime_dependencies false || exit 1
                                     load_caddy_node_module
                                     installation_node_caddy
+                                    ;;
+                                4)
+                                    ensure_runtime_dependencies false || exit 1
+                                    load_caddy_node_module
+                                    installation_node_caddy_xhttp
                                     ;;
                             esac
                             ;;

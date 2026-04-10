@@ -1,8 +1,7 @@
 #!/bin/bash
-# Module: Install Node Nginx
+# Module: Install Node Caddy
 
-install_node_caddy() {
-    # Load selfsteal templates module
+collect_node_install_inputs_caddy() {
     load_selfsteal_templates_module
 
     mkdir -p /opt/remnanode && cd /opt/remnanode
@@ -48,8 +47,14 @@ install_node_caddy() {
         echo -e "${COLOR_RED}${LANG[ABORT_MESSAGE]}${COLOR_RESET}"
         exit 1
     fi
+}
 
-    cat > docker-compose.yml <<EOL
+write_caddy_node_compose() {
+    local caddy_command="$1"
+    local caddy_environment="$2"
+    local caddy_healthcheck="$3"
+
+    cat > /opt/remnanode/docker-compose.yml <<EOL
 x-common: &common
   ulimits:
     nofile:
@@ -76,17 +81,8 @@ services:
           - /var/www/html:/var/www/html:ro
           - /dev/shm:/dev/shm:rw
           - caddy_data:/data
-      command: sh -c 'rm -f /dev/shm/nginx.sock && caddy run --config /etc/caddy/Caddyfile --adapter caddyfile'
-      environment:
-          - CADDY_SOCKET_PATH=/dev/shm/nginx.sock
-          - SELF_STEAL_DOMAIN=${SELFSTEAL_DOMAIN}
-      healthcheck:
-          test: ["CMD", "test", "-S", "/dev/shm/nginx.sock"]
-          interval: 2s
-          timeout: 5s
-          retries: 15
-          start_period: 5s
-
+      command: sh -c '$caddy_command'
+$caddy_environment$caddy_healthcheck
     remnanode:
       image: remnawave/node:latest
       container_name: remnanode
@@ -107,7 +103,9 @@ volumes:
     driver: local
     external: false
 EOL
+}
 
+write_caddy_tcp_node_config() {
     cat > /opt/remnanode/Caddyfile <<EOL
 {
     admin off
@@ -139,12 +137,41 @@ https://{\$SELF_STEAL_DOMAIN} {
 EOL
 }
 
-installation_node_caddy() {
-    echo -e "${COLOR_YELLOW}${LANG[INSTALLING_NODE]}${COLOR_RESET}"
-    install_node_caddy
+write_caddy_xhttp_node_config() {
+    cat > /opt/remnanode/Caddyfile <<EOL
+{
+    admin off
+    servers {
+        listener_wrappers {
+            proxy_protocol
+            tls
+        }
+    }
+    auto_https disable_redirects
+}
 
+http://{\$SELF_STEAL_DOMAIN} {
+    bind 0.0.0.0
+    redir https://{\$SELF_STEAL_DOMAIN}{uri} permanent
+}
+
+https://{\$SELF_STEAL_DOMAIN}:8001 {
+    bind 127.0.0.1
+    root * /var/www/html
+    try_files {path} /index.html
+    file_server
+}
+
+:80 {
+    bind 0.0.0.0
+    respond 204
+}
+EOL
+}
+
+finish_caddy_node_install() {
     ufw allow 80/tcp comment 'HTTP' > /dev/null 2>&1
-    ufw allow from $PANEL_IP to any port 2222 > /dev/null 2>&1
+    ufw allow from "$PANEL_IP" to any port 2222 proto tcp > /dev/null 2>&1
     ufw reload > /dev/null 2>&1
 
     echo -e "${COLOR_YELLOW}${LANG[STARTING_NODE]}${COLOR_RESET}"
@@ -174,4 +201,40 @@ installation_node_caddy() {
         fi
         ((attempt++))
     done
+}
+
+installation_node_caddy() {
+    echo -e "${COLOR_YELLOW}${LANG[INSTALLING_NODE]}${COLOR_RESET}"
+    collect_node_install_inputs_caddy
+
+    write_caddy_node_compose \
+        'rm -f /dev/shm/nginx.sock && caddy run --config /etc/caddy/Caddyfile --adapter caddyfile' \
+        '      environment:
+          - CADDY_SOCKET_PATH=/dev/shm/nginx.sock
+          - SELF_STEAL_DOMAIN=${SELFSTEAL_DOMAIN}
+' \
+        '      healthcheck:
+          test: ["CMD", "test", "-S", "/dev/shm/nginx.sock"]
+          interval: 2s
+          timeout: 5s
+          retries: 15
+          start_period: 5s
+'
+    write_caddy_tcp_node_config
+    finish_caddy_node_install
+}
+
+installation_node_caddy_xhttp() {
+    echo -e "${COLOR_YELLOW}${LANG[INSTALLING_NODE]}${COLOR_RESET}"
+    echo -e "${COLOR_YELLOW}${LANG[XHTTP_PANEL_HINT]}${COLOR_RESET}"
+    collect_node_install_inputs_caddy
+
+    write_caddy_node_compose \
+        'caddy run --config /etc/caddy/Caddyfile --adapter caddyfile' \
+        '      environment:
+          - SELF_STEAL_DOMAIN=${SELFSTEAL_DOMAIN}
+' \
+        ''
+    write_caddy_xhttp_node_config
+    finish_caddy_node_install
 }
