@@ -149,10 +149,7 @@ installation_node_caddy() {
 
     echo -e "${COLOR_YELLOW}${LANG[STARTING_NODE]}${COLOR_RESET}"
     sleep 3
-    cd /opt/remnanode
-    run_compose up -d > /dev/null 2>&1 &
-
-    spinner $! "${LANG[WAITING]}"
+    start_compose_stack /opt/remnanode || exit 1
 
     randomhtml
 

@@ -1525,9 +1525,14 @@ ensure_runtime_dependencies() {
 }
 
 run_compose() {
+    local last_status=1
+
     if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
         docker compose "$@"
-        return $?
+        last_status=$?
+        if [ $last_status -eq 0 ]; then
+            return 0
+        fi
     fi
 
     if command -v docker-compose >/dev/null 2>&1 && docker-compose version >/dev/null 2>&1; then
@@ -1539,7 +1544,10 @@ run_compose() {
 
     if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
         docker compose "$@"
-        return $?
+        last_status=$?
+        if [ $last_status -eq 0 ]; then
+            return 0
+        fi
     fi
 
     if command -v docker-compose >/dev/null 2>&1 && docker-compose version >/dev/null 2>&1; then
@@ -1547,8 +1555,56 @@ run_compose() {
         return $?
     fi
 
+    if [ $last_status -ne 0 ]; then
+        return $last_status
+    fi
+
     echo -e "${COLOR_RED}${LANG[ERROR_DOCKER_NOT_WORKING]}${COLOR_RESET}" >&2
     return 1
+}
+
+start_compose_stack() {
+    local target_dir="$1"
+    local validate_log
+    local up_log
+    local status
+
+    validate_log=$(mktemp)
+    up_log=$(mktemp)
+
+    if ! (cd "$target_dir" && run_compose config >"$validate_log" 2>&1); then
+        echo -e "${COLOR_RED}${LANG[COMPOSE_CONFIG_INVALID]}${COLOR_RESET}"
+        if [ -s "$validate_log" ]; then
+            echo -e "${COLOR_YELLOW}${LANG[COMPOSE_OUTPUT]}${COLOR_RESET}"
+            cat "$validate_log"
+        fi
+        echo -e "${COLOR_YELLOW}cd $target_dir && docker compose logs -f${COLOR_RESET}"
+        echo -e "${COLOR_YELLOW}cd $target_dir && docker-compose logs -f${COLOR_RESET}"
+        rm -f "$validate_log" "$up_log"
+        return 1
+    fi
+
+    (cd "$target_dir" && run_compose up -d >"$up_log" 2>&1) &
+    local pid=$!
+
+    spinner $pid "${LANG[WAITING]}"
+    wait $pid
+    status=$?
+
+    if [ $status -ne 0 ]; then
+        echo -e "${COLOR_RED}${LANG[COMPOSE_UP_FAILED]}${COLOR_RESET}"
+        if [ -s "$up_log" ]; then
+            echo -e "${COLOR_YELLOW}${LANG[COMPOSE_OUTPUT]}${COLOR_RESET}"
+            cat "$up_log"
+        fi
+        echo -e "${COLOR_YELLOW}cd $target_dir && docker compose logs -f${COLOR_RESET}"
+        echo -e "${COLOR_YELLOW}cd $target_dir && docker-compose logs -f${COLOR_RESET}"
+        rm -f "$validate_log" "$up_log"
+        return 1
+    fi
+
+    rm -f "$validate_log" "$up_log"
+    return 0
 }
 
 extract_domain() {
