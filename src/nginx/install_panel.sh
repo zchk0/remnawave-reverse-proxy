@@ -162,8 +162,8 @@ x-logging: &logging
   logging:
     driver: json-file
     options:
-      max-size: 100m
-      max-file: 5
+      max-size: "100m"
+      max-file: "5"
 
 x-env: &env
   env_file: .env
