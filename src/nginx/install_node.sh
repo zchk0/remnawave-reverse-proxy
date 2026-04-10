@@ -280,8 +280,8 @@ installation_node() {
     sleep 1
 
     collect_node_install_inputs_nginx
-    prepare_nginx_node_certificates
     write_nginx_node_compose 'rm -f /dev/shm/nginx.sock && exec nginx -g "daemon off;"'
+    prepare_nginx_node_certificates
     write_nginx_tcp_node_config
     finish_nginx_node_install
 }
@@ -292,8 +292,8 @@ installation_node_xhttp() {
     sleep 1
 
     collect_node_install_inputs_nginx
-    prepare_nginx_node_certificates
     write_nginx_node_compose 'exec nginx -g "daemon off;"'
+    prepare_nginx_node_certificates
     write_nginx_xhttp_node_config
     ufw allow from "$PANEL_IP" to any port 2222 proto tcp > /dev/null 2>&1
     ufw reload > /dev/null 2>&1
