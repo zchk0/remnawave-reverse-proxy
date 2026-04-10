@@ -265,9 +265,9 @@ LANG[IP_ERROR]="Enter a valid IP address in the format X.X.X.X (e.g., 192.168.1.
 LANG[CERT_PROMPT]="Enter the node Secret Key from the node edit card (paste the content and press Enter twice):"
 LANG[CERT_CONFIRM]="Are you sure the certificate is correct? (y/n):"
 LANG[XHTTP_PANEL_HINT]="For xhttp mode, the panel-side profile must use two inbounds: an outer tcp+reality listener on 443 with target 127.0.0.1:8001 and a fallback to an inner xhttp inbound using the same path."
-LANG[XHTTP_LOCAL_FAIL]="The local xhttp fallback on 127.0.0.1:8001 is not reachable yet."
+LANG[XHTTP_LOCAL_FAIL]="The local xhttp listener on 127.0.0.1:8001 is not listening yet."
 LANG[XHTTP_LOCAL_OK_PUBLIC_FAIL]="The local xhttp fallback is reachable, but the public selfsteal endpoint on 443 is still not responding."
-LANG[XHTTP_DEBUG_HINT]="Check the local fallback, the public 443 endpoint, and the container logs:"
+LANG[XHTTP_DEBUG_HINT]="Check the local listener on 8001, the public 443 endpoint, and the container logs:"
 LANG[ABORT_MESSAGE]="Installation aborted by user"
 LANG[SUCCESS_MESSAGE]="Node successfully connected"
 #Node Check

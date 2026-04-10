@@ -238,7 +238,6 @@ finish_nginx_node_install() {
 }
 
 verify_nginx_xhttp_node_install() {
-    local local_url="https://$SELFSTEAL_DOMAIN:8001"
     local public_url="https://$SELFSTEAL_DOMAIN"
     local max_attempts=5
     local attempt=1
@@ -249,7 +248,7 @@ verify_nginx_xhttp_node_install() {
     while [ $attempt -le $max_attempts ]; do
         printf "${COLOR_YELLOW}${LANG[NODE_ATTEMPT]}${COLOR_RESET}\n" "$attempt" "$max_attempts"
 
-        if curl -s --fail --max-time 10 --resolve "$SELFSTEAL_DOMAIN:8001:127.0.0.1" "$local_url" | grep -q "html"; then
+        if ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq '(^|:)8001$'; then
             if curl -s --fail --max-time 10 "$public_url" | grep -q "html"; then
                 echo -e "${COLOR_GREEN}${LANG[NODE_LAUNCHED]}${COLOR_RESET}"
                 return 0
@@ -263,7 +262,7 @@ verify_nginx_xhttp_node_install() {
         if [ $attempt -eq $max_attempts ]; then
             printf "${COLOR_RED}${LANG[NODE_NOT_CONNECTED]}${COLOR_RESET}\n" "$max_attempts"
             echo -e "${COLOR_YELLOW}${LANG[XHTTP_DEBUG_HINT]}${COLOR_RESET}"
-            echo -e "${COLOR_YELLOW}curl -vk --resolve $SELFSTEAL_DOMAIN:8001:127.0.0.1 $local_url${COLOR_RESET}"
+            echo -e "${COLOR_YELLOW}ss -ltnp | grep :8001${COLOR_RESET}"
             echo -e "${COLOR_YELLOW}curl -vk $public_url${COLOR_RESET}"
             echo -e "${COLOR_YELLOW}docker logs remnanode --tail 100${COLOR_RESET}"
             echo -e "${COLOR_YELLOW}docker logs remnawave-nginx --tail 100${COLOR_RESET}"
