@@ -235,6 +235,46 @@ finish_nginx_node_install() {
     done
 }
 
+verify_nginx_xhttp_node_install() {
+    local local_url="https://$SELFSTEAL_DOMAIN:8001"
+    local public_url="https://$SELFSTEAL_DOMAIN"
+    local max_attempts=5
+    local attempt=1
+    local delay=15
+
+    printf "${COLOR_YELLOW}${LANG[NODE_CHECK]}${COLOR_RESET}\n" "$SELFSTEAL_DOMAIN"
+
+    while [ $attempt -le $max_attempts ]; do
+        printf "${COLOR_YELLOW}${LANG[NODE_ATTEMPT]}${COLOR_RESET}\n" "$attempt" "$max_attempts"
+
+        if curl -s --fail --max-time 10 --resolve "$SELFSTEAL_DOMAIN:8001:127.0.0.1" "$local_url" | grep -q "html"; then
+            if curl -s --fail --max-time 10 "$public_url" | grep -q "html"; then
+                echo -e "${COLOR_GREEN}${LANG[NODE_LAUNCHED]}${COLOR_RESET}"
+                return 0
+            fi
+
+            echo -e "${COLOR_YELLOW}${LANG[XHTTP_LOCAL_OK_PUBLIC_FAIL]}${COLOR_RESET}"
+        else
+            echo -e "${COLOR_YELLOW}${LANG[XHTTP_LOCAL_FAIL]}${COLOR_RESET}"
+        fi
+
+        if [ $attempt -eq $max_attempts ]; then
+            printf "${COLOR_RED}${LANG[NODE_NOT_CONNECTED]}${COLOR_RESET}\n" "$max_attempts"
+            echo -e "${COLOR_YELLOW}${LANG[XHTTP_DEBUG_HINT]}${COLOR_RESET}"
+            echo -e "${COLOR_YELLOW}curl -vk --resolve $SELFSTEAL_DOMAIN:8001:127.0.0.1 $local_url${COLOR_RESET}"
+            echo -e "${COLOR_YELLOW}curl -vk $public_url${COLOR_RESET}"
+            echo -e "${COLOR_YELLOW}docker logs remnanode --tail 100${COLOR_RESET}"
+            echo -e "${COLOR_YELLOW}docker logs remnawave-nginx --tail 100${COLOR_RESET}"
+            return 1
+        fi
+
+        sleep $delay
+        ((attempt++))
+    done
+
+    return 1
+}
+
 installation_node() {
     echo -e "${COLOR_YELLOW}${LANG[INSTALLING_NODE]}${COLOR_RESET}"
     sleep 1
@@ -255,5 +295,13 @@ installation_node_xhttp() {
     prepare_nginx_node_certificates
     write_nginx_node_compose 'exec nginx -g "daemon off;"'
     write_nginx_xhttp_node_config
-    finish_nginx_node_install
+    ufw allow from "$PANEL_IP" to any port 2222 proto tcp > /dev/null 2>&1
+    ufw reload > /dev/null 2>&1
+
+    echo -e "${COLOR_YELLOW}${LANG[STARTING_NODE]}${COLOR_RESET}"
+    sleep 3
+    start_compose_stack /opt/remnanode || exit 1
+
+    randomhtml
+    verify_nginx_xhttp_node_install || exit 1
 }
