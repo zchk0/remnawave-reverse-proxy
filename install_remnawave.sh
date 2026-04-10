@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="3.0.7-zchk0"
+SCRIPT_VERSION="3.0.8-zchk0"
 UPDATE_AVAILABLE=false
 DIR_REMNAWAVE="/usr/local/remnawave_reverse/"
 LANG_FILE="${DIR_REMNAWAVE}selected_language"
@@ -412,13 +412,13 @@ remove_script() {
 
             if [ -d "/opt/remnawave" ]; then
                 cd /opt/remnawave || { echo -e "${COLOR_RED}${LANG[CHANGE_DIR_FAILED]} /opt/remnawave${COLOR_RESET}"; exit 1; }
-                docker compose down -v --rmi all --remove-orphans > /dev/null 2>&1 &
+                run_compose down -v --rmi all --remove-orphans > /dev/null 2>&1 &
                 spinner $! "${LANG[WAITING]}"
                 rm -rf /opt/remnawave 2>/dev/null
             fi
             if [ -d "/opt/remnanode" ]; then
                 cd /opt/remnanode || { echo -e "${COLOR_RED}${LANG[CHANGE_DIR_FAILED]} /opt/remnanode${COLOR_RESET}"; exit 1; }
-                docker compose down -v --rmi all --remove-orphans > /dev/null 2>&1 &
+                run_compose down -v --rmi all --remove-orphans > /dev/null 2>&1 &
                 spinner $! "${LANG[WAITING]}"
                 rm -rf /opt/remnanode 2>/dev/null
             fi
@@ -637,25 +637,21 @@ manage_install() {
                 1)
                     load_install_panel_node_module
                     load_api_module
-                    if [ ! -f "${DIR_REMNAWAVE}install_packages" ] || ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1 || ! command -v certbot >/dev/null 2>&1; then
-                        install_packages || {
-                            echo -e "${COLOR_RED}${LANG[ERROR_INSTALL_DOCKER]}${COLOR_RESET}"
-                            log_clear
-                            exit 1
-                        }
-                    fi
+                    ensure_runtime_dependencies true || {
+                        echo -e "${COLOR_RED}${LANG[ERROR_INSTALL_DOCKER]}${COLOR_RESET}"
+                        log_clear
+                        exit 1
+                    }
                     installation
                     ;;
                 2)
                     load_caddy_module
                     load_api_module
-                    if [ ! -f "${DIR_REMNAWAVE}install_packages" ] || ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-                        install_packages || {
-                            echo -e "${COLOR_RED}${LANG[ERROR_INSTALL_DOCKER]}${COLOR_RESET}"
-                            log_clear
-                            exit 1
-                        }
-                    fi
+                    ensure_runtime_dependencies false || {
+                        echo -e "${COLOR_RED}${LANG[ERROR_INSTALL_DOCKER]}${COLOR_RESET}"
+                        log_clear
+                        exit 1
+                    }
                     installation_panel_node_caddy
                     ;;
                 0)
@@ -681,25 +677,21 @@ manage_install() {
                 1)
                     load_install_panel_module
                     load_api_module
-                    if [ ! -f "${DIR_REMNAWAVE}install_packages" ] || ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1 || ! command -v certbot >/dev/null 2>&1; then
-                        install_packages || {
-                            echo -e "${COLOR_RED}${LANG[ERROR_INSTALL_DOCKER]}${COLOR_RESET}"
-                            log_clear
-                            exit 1
-                        }
-                    fi
+                    ensure_runtime_dependencies true || {
+                        echo -e "${COLOR_RED}${LANG[ERROR_INSTALL_DOCKER]}${COLOR_RESET}"
+                        log_clear
+                        exit 1
+                    }
                     installation_panel
                     ;;
                 2)
                     load_caddy_panel_module
                     load_api_module
-                    if [ ! -f "${DIR_REMNAWAVE}install_packages" ] || ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-                        install_packages || {
-                            echo -e "${COLOR_RED}${LANG[ERROR_INSTALL_DOCKER]}${COLOR_RESET}"
-                            log_clear
-                            exit 1
-                        }
-                    fi
+                    ensure_runtime_dependencies false || {
+                        echo -e "${COLOR_RED}${LANG[ERROR_INSTALL_DOCKER]}${COLOR_RESET}"
+                        log_clear
+                        exit 1
+                    }
                     installation_panel_caddy
                     ;;
                 0)
@@ -730,24 +722,20 @@ manage_install() {
             case $WEBSERVER_OPTION in
                 1)
                     load_install_node_module
-                    if [ ! -f "${DIR_REMNAWAVE}install_packages" ] || ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1 || ! command -v certbot >/dev/null 2>&1; then
-                        install_packages || {
-                            echo -e "${COLOR_RED}${LANG[ERROR_INSTALL_DOCKER]}${COLOR_RESET}"
-                            log_clear
-                            exit 1
-                        }
-                    fi
+                    ensure_runtime_dependencies true || {
+                        echo -e "${COLOR_RED}${LANG[ERROR_INSTALL_DOCKER]}${COLOR_RESET}"
+                        log_clear
+                        exit 1
+                    }
                     installation_node
                     ;;
                 2)
                     load_caddy_node_module
-                    if [ ! -f "${DIR_REMNAWAVE}install_packages" ] || ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-                        install_packages || {
-                            echo -e "${COLOR_RED}${LANG[ERROR_INSTALL_DOCKER]}${COLOR_RESET}"
-                            log_clear
-                            exit 1
-                        }
-                    fi
+                    ensure_runtime_dependencies false || {
+                        echo -e "${COLOR_RED}${LANG[ERROR_INSTALL_DOCKER]}${COLOR_RESET}"
+                        log_clear
+                        exit 1
+                    }
                     installation_node_caddy
                     ;;
                 0)
@@ -804,23 +792,49 @@ choose_reinstall_type() {
                 read confirm
                 if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
                     reinstall_remnawave
-                    if [ ! -f ${DIR_REMNAWAVE}install_packages ]; then
-                        install_packages
-                    fi
                     show_webserver_select
                     case $WEBSERVER_OPTION in
                         1)
                             case $REINSTALL_OPTION in
-                                1) load_install_panel_node_module; load_api_module; installation ;;
-                                2) load_install_panel_module; load_api_module; installation_panel ;;
-                                3) load_install_node_module; load_api_module; installation_node ;;
+                                1)
+                                    ensure_runtime_dependencies true || exit 1
+                                    load_install_panel_node_module
+                                    load_api_module
+                                    installation
+                                    ;;
+                                2)
+                                    ensure_runtime_dependencies true || exit 1
+                                    load_install_panel_module
+                                    load_api_module
+                                    installation_panel
+                                    ;;
+                                3)
+                                    ensure_runtime_dependencies true || exit 1
+                                    load_install_node_module
+                                    load_api_module
+                                    installation_node
+                                    ;;
                             esac
                             ;;
                         2)
                             case $REINSTALL_OPTION in
-                                1) load_caddy_module; load_api_module; installation_panel_node_caddy ;;
-                                2) load_caddy_panel_module; load_api_module; installation_panel_caddy ;;
-                                3) load_caddy_node_module; installation_node_caddy ;;
+                                1)
+                                    ensure_runtime_dependencies false || exit 1
+                                    load_caddy_module
+                                    load_api_module
+                                    installation_panel_node_caddy
+                                    ;;
+                                2)
+                                    ensure_runtime_dependencies false || exit 1
+                                    load_caddy_panel_module
+                                    load_api_module
+                                    installation_panel_caddy
+                                    ;;
+                                3)
+                                    ensure_runtime_dependencies false || exit 1
+                                    load_caddy_node_module
+                                    installation_node_caddy
+                                    ;;
                             esac
                             ;;
                         0)
@@ -852,13 +866,13 @@ choose_reinstall_type() {
 reinstall_remnawave() {
     if [ -d "/opt/remnawave" ]; then
         cd /opt/remnawave || return
-        docker compose down -v --rmi all --remove-orphans > /dev/null 2>&1 &
+        run_compose down -v --rmi all --remove-orphans > /dev/null 2>&1 &
         spinner $! "${LANG[WAITING]}"
         rm -rf /opt/remnawave 2>/dev/null
     fi
     if [ -d "/opt/remnanode" ]; then
         cd /opt/remnanode || return
-        docker compose down -v --rmi all --remove-orphans > /dev/null 2>&1 &
+        run_compose down -v --rmi all --remove-orphans > /dev/null 2>&1 &
         spinner $! "${LANG[WAITING]}"
         rm -rf /opt/remnanode 2>/dev/null
     fi
@@ -1399,40 +1413,7 @@ install_packages() {
         fi
     fi
 
-    if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-        echo -e "${COLOR_YELLOW}Installing Docker via get.docker.com...${COLOR_RESET}"
-
-        if ! curl -fsSL https://get.docker.com -o /tmp/get-docker.sh; then
-            echo -e "${COLOR_RED}${LANG[ERROR_DOWNLOAD_DOCKER_KEY]}${COLOR_RESET}" >&2
-            return 1
-        fi
-
-        if ! sh /tmp/get-docker.sh; then
-            echo -e "${COLOR_RED}${LANG[ERROR_INSTALL_DOCKER]}${COLOR_RESET}" >&2
-            return 1
-        fi
-    fi
-
-    if ! command -v docker >/dev/null 2>&1; then
-        echo -e "${COLOR_RED}${LANG[ERROR_DOCKER_NOT_INSTALLED]}${COLOR_RESET}" >&2
-        return 1
-    fi
-
-    if ! systemctl is-active --quiet docker; then
-        if ! systemctl start docker; then
-            echo -e "${COLOR_RED}${LANG[ERROR_START_DOCKER]}${COLOR_RESET}" >&2
-            return 1
-        fi
-    fi
-
-    if ! systemctl is-enabled --quiet docker; then
-        if ! systemctl enable docker; then
-            echo -e "${COLOR_RED}${LANG[ERROR_ENABLE_DOCKER]}${COLOR_RESET}" >&2
-            return 1
-        fi
-    fi
-
-    if ! docker info >/dev/null 2>&1; then
+    if ! ensure_docker_ready; then
         echo -e "${COLOR_RED}${LANG[ERROR_DOCKER_NOT_WORKING]}${COLOR_RESET}" >&2
         return 1
     fi
@@ -1463,6 +1444,111 @@ install_packages() {
     touch ${DIR_REMNAWAVE}install_packages
     echo -e "${COLOR_GREEN}${LANG[SUCCESS_INSTALL]}${COLOR_RESET}"
     clear
+}
+
+docker_engine_ready() {
+    command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1
+}
+
+docker_compose_ready() {
+    if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if command -v docker-compose >/dev/null 2>&1 && docker-compose version >/dev/null 2>&1; then
+        return 0
+    fi
+
+    return 1
+}
+
+repair_docker_installation() {
+    echo -e "${COLOR_YELLOW}${LANG[DOCKER_REPAIRING]}${COLOR_RESET}"
+
+    if ! apt-get update -y; then
+        echo -e "${COLOR_RED}${LANG[ERROR_UPDATE_LIST]}${COLOR_RESET}" >&2
+        return 1
+    fi
+
+    if ! curl -fsSL https://get.docker.com -o /tmp/get-docker.sh; then
+        echo -e "${COLOR_RED}${LANG[ERROR_DOWNLOAD_DOCKER_KEY]}${COLOR_RESET}" >&2
+        return 1
+    fi
+
+    if ! sh /tmp/get-docker.sh; then
+        echo -e "${COLOR_RED}${LANG[ERROR_INSTALL_DOCKER]}${COLOR_RESET}" >&2
+        return 1
+    fi
+
+    apt-get install -y docker-compose-plugin docker-buildx-plugin > /dev/null 2>&1 || true
+
+    if ! systemctl is-active --quiet docker; then
+        if ! systemctl start docker; then
+            echo -e "${COLOR_RED}${LANG[ERROR_START_DOCKER]}${COLOR_RESET}" >&2
+            return 1
+        fi
+    fi
+
+    if ! systemctl is-enabled --quiet docker; then
+        if ! systemctl enable docker; then
+            echo -e "${COLOR_RED}${LANG[ERROR_ENABLE_DOCKER]}${COLOR_RESET}" >&2
+            return 1
+        fi
+    fi
+
+    docker_engine_ready && docker_compose_ready
+}
+
+ensure_docker_ready() {
+    if docker_engine_ready && docker_compose_ready; then
+        return 0
+    fi
+
+    repair_docker_installation
+}
+
+ensure_runtime_dependencies() {
+    local need_certbot="${1:-false}"
+
+    if [ ! -f "${DIR_REMNAWAVE}install_packages" ] || { [ "$need_certbot" = "true" ] && ! command -v certbot >/dev/null 2>&1; }; then
+        install_packages || return 1
+    fi
+
+    ensure_docker_ready || return 1
+
+    if [ "$need_certbot" = "true" ] && ! command -v certbot >/dev/null 2>&1; then
+        echo -e "${COLOR_RED}${LANG[ERROR_INSTALL_PACKAGES]}${COLOR_RESET}" >&2
+        return 1
+    fi
+
+    return 0
+}
+
+run_compose() {
+    if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+        docker compose "$@"
+        return $?
+    fi
+
+    if command -v docker-compose >/dev/null 2>&1 && docker-compose version >/dev/null 2>&1; then
+        docker-compose "$@"
+        return $?
+    fi
+
+    ensure_docker_ready || return 1
+
+    if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+        docker compose "$@"
+        return $?
+    fi
+
+    if command -v docker-compose >/dev/null 2>&1 && docker-compose version >/dev/null 2>&1; then
+        docker-compose "$@"
+        return $?
+    fi
+
+    echo -e "${COLOR_RED}${LANG[ERROR_DOCKER_NOT_WORKING]}${COLOR_RESET}" >&2
+    return 1
 }
 
 extract_domain() {
