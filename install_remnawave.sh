@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="3.0.9-zchk0"
+SCRIPT_VERSION="3.0.10-zchk0"
 UPDATE_AVAILABLE=false
 DIR_REMNAWAVE="/usr/local/remnawave_reverse/"
 LANG_FILE="${DIR_REMNAWAVE}selected_language"
@@ -194,9 +194,31 @@ error() {
 }
 
 check_os() {
-    if ! grep -q "bullseye" /etc/os-release && ! grep -q "bookworm" /etc/os-release && ! grep -q "jammy" /etc/os-release && ! grep -q "noble" /etc/os-release && ! grep -q "trixie" /etc/os-release; then
+    if [ ! -r /etc/os-release ]; then
         error "${LANG[ERROR_OS]}"
     fi
+
+    local ID=""
+    local VERSION_ID=""
+    local VERSION_CODENAME=""
+    local UBUNTU_CODENAME=""
+
+    # shellcheck disable=SC1091
+    . /etc/os-release
+
+    case "${ID}:${VERSION_ID}" in
+        debian:11|debian:12|debian:13|ubuntu:22.04|ubuntu:24.04|ubuntu:26.04)
+            return 0
+            ;;
+    esac
+
+    case "${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}" in
+        bullseye|bookworm|jammy|noble|resolute|trixie)
+            return 0
+            ;;
+    esac
+
+    error "${LANG[ERROR_OS]}"
 }
 
 check_root() {
